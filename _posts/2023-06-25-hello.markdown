@@ -4,4 +4,268 @@ title: Hello World - Vno
 date: 2023-06-25 15:32:24.000000000 +09:00
 ---
 
-hello
+# 《计算机与操作系统》第四次实验
+
+## 实验代码
+
+### 增加的系统调用
+
+```c
+PUBLIC void p_process(SEMAPHORE *s) {
+    disable_int();
+    s->value--;
+    if (s->value < 0) {
+        p_proc_ready->blocked = TRUE;
+        p_proc_ready->status = WAITING;
+        s->p_list[s->tail] = p_proc_ready;
+        s->tail = (s->tail + 1) % NR_PROCS;
+        schedule();
+    }
+    enable_int();
+}
+
+PUBLIC void v_process(SEMAPHORE *s) {
+    disable_int();
+    s->value++;
+    if (s->value <= 0) {
+        s->p_list[s->head]->blocked = FALSE;
+//        p_proc_ready->status = WORKING;
+        s->head = (s->head + 1) % NR_PROCS;
+    }
+    enable_int();
+}
+
+PUBLIC int sys_get_ticks() {
+    return ticks;
+}
+
+PUBLIC void sys_sleep(int milli_sec) {
+    int ticks = milli_sec / 1000 * HZ * 10;
+    p_proc_ready->sleeping = ticks;
+    schedule();
+}
+
+PUBLIC void sys_write_str(char *buf, int len) {
+    CONSOLE *p_con = console_table;
+    for (int i = 0; i < len; i++) {
+        out_char(p_con, buf[i]);
+    }
+}
+```
+
+```c
+PUBLIC    system_call sys_call_table[NR_SYS_CALL] = {
+        sys_get_ticks,
+        sys_write_str,
+        sys_sleep,
+        p_process,
+        v_process
+};
+```
+
+### 读者优先
+
+在此策略下，写者进程可能会被饿死。
+
+```c
+void read_rf(int slices) {
+    P(&reader_mutex);
+    if (++readers == 1)
+        P(&writer_mutex); // 有读者时不允许写
+    V(&reader_mutex);
+
+    P(&reader_count_mutex);
+    read_proc(slices);
+    V(&reader_count_mutex);
+
+    P(&reader_mutex);
+    if (--readers == 0)
+        V(&writer_mutex); // 没有读者时可以开始写
+    V(&reader_mutex);
+}
+
+void write_rf(int slices) {
+    P(&writer_mutex);
+    write_proc(slices);
+    V(&writer_mutex);
+}
+```
+
+### 写者优先
+
+在此策略下，读者进程可能会被饿死。
+
+```c
+void read_wf(int slices) {
+    P(&reader_count_mutex);
+
+    P(&S);
+    P(&reader_mutex);
+    if (++readers == 1)
+        P(&rw_mutex); // 有读者时不允许写
+    V(&reader_mutex);
+    V(&S);
+
+    read_proc(slices);
+
+    P(&reader_mutex);
+    if (--readers == 0)
+        V(&rw_mutex); // 没有读者时可以开始写
+    V(&reader_mutex);
+
+    V(&reader_count_mutex);
+}
+
+void write_wf(int slices) {
+    P(&writer_mutex);
+    if (++writers == 1)
+        P(&S);
+    V(&writer_mutex);
+
+    P(&rw_mutex);
+    write_proc(slices);
+    V(&rw_mutex);
+
+    P(&writer_mutex);
+    if (--writers == 0)
+        V(&S);
+    V(&writer_mutex);
+}
+```
+
+### 读写公平
+
+读写公平是防止进程饿死的方法。
+
+```c
+void read_fair(int slices) {
+    P(&S);
+
+    P(&reader_count_mutex);
+    P(&reader_mutex);
+    if (++readers == 1)
+        P(&rw_mutex); // 有读者，禁止写
+    V(&reader_mutex);
+
+    V(&S);
+
+    read_proc(slices);
+
+    P(&reader_mutex);
+    if (--readers == 0)
+        V(&rw_mutex); // 没有读者，可以开始写了
+    V(&reader_mutex);
+    V(&reader_count_mutex);
+}
+
+void write_fair(int slices) {
+    P(&S);
+    P(&rw_mutex);
+    write_proc(slices);
+    V(&rw_mutex);
+    V(&S);
+}
+```
+
+### 生产者与消费者
+
+要求：现有6个一直存在的进程，其中A是普通进程，P1、P2是生产者，C1、C2、C3是消费
+者。
+●所有生产者和消费者共享容量为m(m>0)的仓库。
+●生产者每个时间片生产一件货物放入仓库。消费者每个时间片从仓库拿走一件货物，其中C1只拿P1生产的货物，C2、C3只拿P2生产的货物。
+
+具体实现：
+
+采用的方法较为取巧，重新生成一个文件夹用于专门处理此种情况
+
+```
+void Producer1(){
+	while (1)
+	{
+		sleep_ms(TIME_SLICE);
+		p_proc_ready->total_num ++;
+		P(&sput);
+		P(&s1);
+		putptr = (putptr + 1) % N;
+		V(&s1);
+		V(&sget1);
+	}
+}
+
+void Producer2(){
+	while (1)
+	{
+		sleep_ms(TIME_SLICE);
+		p_proc_ready->total_num ++;
+		P(&sput);
+		P(&s1);
+		putptr = (putptr + 1) % N;
+		V(&s1);
+		V(&sget2);
+	}
+}
+
+void Consumer1(){
+	while (1)
+	{
+		sleep_ms(TIME_SLICE);
+		P(&sget1);
+		P(&s2);
+		getptr = (getptr + 1) % N;
+		V(&s2);
+		V(&sput);
+		p_proc_ready->total_num ++;
+	}	
+}
+
+void Consumer2(){
+	while (1)
+	{
+		sleep_ms(TIME_SLICE);
+		P(&sget2);
+		P(&s2);
+		getptr = (getptr + 1) % N;
+		V(&s2);
+		V(&sput);
+		p_proc_ready->total_num ++;
+	}	
+}
+
+void Consumer3(){
+	while (1)
+	{
+		sleep_ms(TIME_SLICE);
+		P(&sget2);
+		P(&s2);
+		getptr = (getptr + 1) % N;
+		V(&s2);
+		V(&sput);
+		p_proc_ready->total_num ++;
+	}	
+}
+```
+
+### 实验相关数据调整方法
+
+1.处理r&w方法：const.h文件进行WORKING_SLICES_B，RELAX_SLICES_B，MAX_READERS，STRATEGY等的修改。global.c修改对应的信号量。
+
+2.处理p&c方法：N在const.h,其余基本同上
+
+```
+/* 系统调用 - 系统级 */
+/* proc.c */
+PUBLIC int sys_get_ticks();
+PUBLIC void sys_write_str(char *buf, int color);
+PUBLIC void sys_sleep(int milli_sec);
+PUBLIC void p_process(SEMAPHORE *s);
+PUBLIC void v_process(SEMAPHORE *s);
+/* syscall.asm */
+PUBLIC void sys_call();             /* int_handler */
+
+/* 系统调用 - 用户级 */
+PUBLIC int get_ticks();
+PUBLIC void write_str(char *buf, int len);
+PUBLIC void sleep_ms(int milli_sec);
+PUBLIC void P(SEMAPHORE *s);
+PUBLIC void V(SEMAPHORE *s);
+```
