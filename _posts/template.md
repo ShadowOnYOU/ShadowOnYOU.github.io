@@ -1,9 +1,9 @@
 ---
 layout: post
-title: template page
-categories: [cate1, cate2]
+title: title
+categories: [word, word]
 description: some word here
-keywords: keyword1, keyword2
+keywords: 嵌入式开发
 mermaid: false
 sequence: false
 flow: false
@@ -12,4 +12,3 @@ mindmap: false
 mindmap2: false
 ---
 
-Content here
